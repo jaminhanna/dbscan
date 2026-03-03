@@ -25,7 +25,7 @@ int main(int argc, char **argv)
   ifstream fin;
   vector <string> events;
   string line;
-  int i, j, ii, jj, t;
+  int i, j, ii, jj, t, n;
   vector <string> ceb;
 
   if (argc != 8) {
@@ -41,91 +41,128 @@ int main(int argc, char **argv)
   sc = atoi(argv[7]);
   fn = argv[3];
 
+  if (sr >= ir) { fprintf(stderr, "sr too big\n"); exit(1); }
+  if (sc >= ic) { fprintf(stderr, "sc too big\n"); exit(1); }
+
   fin.clear();
   fin.open(fn);
   if (fin.fail()) { perror(fn.c_str()); exit(1); }
 
-  while (getline(fin, line)) events.push_back(line);
-  fin.close();
+  n = 0;
+  events.resize(ir);
+  ceb.resize(ir);
 
-  for (i = 0; i < (int) events.size(); i++) {
-    for (j = 0; j < (int) events[i].size(); j++) {
-      if (events[i][j] != '0' && events[i][j] != '1') {
-        fprintf(stderr, "Non-zero/one character at row %d col %d\n", i, j);
+  for (i = 0; i < ir; i++) {
+    ceb[i].resize(ic);
+  }
+
+  /* we loop while there is a frame to be processed
+     and exit whenever the call to getline below fails
+     in between the reading of two frames (which means
+     there is no next frame and we're done) */
+
+  while (1) {
+    for (i = 0; i < ir; i++) {
+      if (getline(fin, line)) {
+        if (line == "") {
+          i--; /* ignore blank lines */
+        } else if ((int) line.size() != ic) {
+          fprintf(stderr, "error: row %d of frame %d does not have %d "
+                          "columns\n", i, n, ic);
+          exit(1);
+        } else {
+          for (j = 0; j < (int) line.size(); j++) {
+            if (line[j] != '0' && line[j] != '1') {
+              fprintf(stderr, "error: row %d of frame %d contains a character "
+                              "that is not '0' or '1'\n", i, n);
+              exit(1);
+            }
+          }
+          events[i] = line;
+        }
+      } else if (i != 0) {
+        fprintf(stderr, "error: couldn't read row %d of frame %d\n", i, n);
         exit(1);
+      } else {
+        fin.close();
+        return 0;
       }
     }
-    if (events[i].size() != events[0].size()) {
-      fprintf(stderr, "Error -- lines %d and %d are different sizes\n", i, j);
-    }
-  }
 
-  if (sr >= (int) events.size()) { fprintf(stderr, "sr too big\n"); exit(1); }
-  if (sc >= (int) events[0].size()) { fprintf(stderr, "sc too big\n"); exit(1); }
-
-  if (DEBUG) {
-    for (i = 0; i < (int) events.size(); i++) {
-      for (j = 0; j < (int) events[0].size(); j++) {
-        t = -(events[i][j] - '0');
-        for (ii = i-e; ii <= i+e; ii++) {
-          for (jj = j-e; jj <= j+e; jj++) {
-            if (ii >= 0 && ii < (int) events.size() && jj >= 0 && jj < (int) events[0].size()) {
-              t += (events[ii][jj] - '0');
+    if (DEBUG) {
+      for (i = 0; i < (int) events.size(); i++) {
+        for (j = 0; j < (int) events[0].size(); j++) {
+          t = -(events[i][j] - '0');
+          for (ii = i-e; ii <= i+e; ii++) {
+            for (jj = j-e; jj <= j+e; jj++) {
+              if (ii >= 0 && ii < (int) events.size() && jj >= 0 && jj < (int) events[0].size()) {
+                t += (events[ii][jj] - '0');
+              }
             }
           }
+          printf("%3d", t);
         }
-        printf("%3d", t);
+        printf("\n");
       }
-      printf("\n");
     }
-  }
-  
-  ceb = events;
 
-  for (i = 0; i < (int) ceb.size(); i++) for (j = 0; j < (int) ceb[0].size(); j++) ceb[i][j] = '.';
+    /* reset the DBSCAN output frame */
 
-  for (i = 0; i < (int) events.size(); i++) {
-    for (j = 0; j < (int) events[0].size(); j++) {
-      if (events[i][j] == '1') {
-        t = 0;
-        for (ii = i-e; ii <= i+e; ii++) {
-          for (jj = j-e; jj <= j+e; jj++) {
-            if (ii >= 0 && ii < (int) events.size() && jj >= 0 && jj < (int) events[0].size()) {
-              t += (events[ii][jj] - '0');
+    for (i = 0; i < ir; i++) {
+      for (j = 0; j < ic; j++) {
+        ceb[i][j] = '.';
+      }
+    }
+
+    /* compute the core points */
+
+    for (i = 0; i < ir; i++) {
+      for (j = 0; j < ic; j++) {
+        if (events[i][j] == '1') {
+          t = 0;
+          ii = (i - e < 0) ? 0 : i - e;
+          for ( ; ii <= i + e && ii < ir; ii++) {
+            jj = (j - e < 0) ? 0 : j - e;
+            for ( ; jj <= j + e && jj < ic; jj++) {
+              t += events[ii][jj] - '0';
             }
           }
+          if (t >= mp) ceb[i][j] = 'C';
         }
-        if (t >= mp) ceb[i][j] = 'C';
       }
     }
-  }
 
-  for (i = 0; i < (int) events.size(); i++) {
-    for (j = 0; j < (int) events[0].size(); j++) {
-      if (events[i][j] == '1' && ceb[i][j] != 'C') {
-        t = 0;
-        for (ii = i-e; ii <= i+e; ii++) {
-          for (jj = j-e; jj <= j+e; jj++) {
-            if (ii >= 0 && ii < (int) events.size() && jj >= 0 && jj < (int) events[0].size()) {
+    /* compute the border points */
+
+    for (i = 0; i < ir; i++) {
+      for (j = 0; j < ic; j++) {
+        if (events[i][j] == '1' && ceb[i][j] != 'C') {
+          t = 0;
+          ii = (i - e < 0) ? 0 : i - e;
+          for ( ; ii <= i + e && ii < ir; ii++) {
+            jj = (j - e < 0) ? 0 : j - e;
+            for ( ; jj <= j + e && jj < ic; jj++) {
               if (ceb[ii][jj] == 'C') ceb[i][j] = 'B';
             }
           }
         }
       }
     }
-  }
 
-  for (i = sr; i < sr + ir; i++) {
-    for (j = sc; j < sc + ic; j++) {
-      if (i < (int) ceb.size() && j < (int) ceb[0].size()) {
-        printf("%c", ceb[i][j]); 
-      } else {
-        printf(".");
+    /* print the (DBSCAN output) frame just created */
+
+    for (i = sr; i < sr + ir; i++) {
+      for (j = sc; j < sc + ic; j++) {
+        if (i < ir && j < ic) {
+          printf("%c", ceb[i][j]);
+        } else {
+          printf(".");
+        }
       }
+      printf("\n");
     }
     printf("\n");
+
+    n++;
   }
-
-  return 0;
 }
-
